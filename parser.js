@@ -1,47 +1,160 @@
+function weekStr2IntList(week) {
+  // 将全角逗号替换为半角逗号
+  let reg = new RegExp("，", "g");
+  week.replace(reg, ',');
+  let weeks = [];
+
+  // 以逗号为界分割字符串，遍历分割的字符串
+  week.split(",").forEach(w => {
+      if (w.search('-') != -1) {
+          let range = w.split("-");
+          let start = parseInt(range[0]);
+          let end = parseInt(range[1]);
+          for (let i = start; i <= end; i++) {
+              if (!weeks.includes(i)) {
+                  weeks.push(i);
+              }
+          }
+      } else if (w.length != 0) {
+          let v = parseInt(w);
+          if (!weeks.includes(v)) {
+              weeks.push(v);
+          }
+      }
+  });
+  return weeks;
+}
+
+function getSections(str) {
+  let start = parseInt(str.split('-')[0])
+  let end = parseInt(str.split('-')[1])
+  let sections = []
+  for (let i = start; i <= end; i++) {
+      sections.push({ section: i })
+  }
+  return sections
+}
+
+function getTime(str) {
+  let t = str.split('节)')
+  let reg = new RegExp('周', 'g')
+  let weekStr = t[1].replace(reg, '')
+  let weeks = getWeeks(weekStr)
+  return [weeks, getSections(t[0].replace('(', ''))]
+}
+
+function getWeeks(str) {
+  let flag = 0
+  if (str.search('单') != -1) {
+      flag = 1
+      str = str.replace('单', '')
+  } else if (str.search('双') != -1) {
+      flag = 2
+      str = str.replace('双', '')
+  }
+  let weeks = weekStr2IntList(str)
+  weeks = weeks.filter((v) => {
+      if (flag === 1) {
+          return v % 2 === 1
+      } else if (flag === 2) {
+          return v % 2 === 0
+      }
+      return v
+  })
+  return weeks
+}
+
+// 解析列表模式
+function parseList(html) {
+  let result = []
+  const $ = cheerio.load(html, { decodeEntities: false });
+  $('#kblist_table').find('tbody').each(function(weekday) {
+      if (weekday > 0) {
+          $(this).find('tr').each(function(index) {
+              if (index > 0) {
+                  let course = {}
+                  $(this).find('td').each(function(i) {
+                      if (i == 0) {
+                          course.sections = getSections($(this).text())
+                      } else {
+                          course.name = $(this).find('.title').text()
+                          let info = []
+                          $(this).find('p font').each(function() {
+                              let text = $(this).text().trim()
+                              if (text.search('上课地点') != -1) {
+                                  text = text.replace('上课地点：', '')
+                              }
+                              info.push(text.split('：')[1])
+                          })
+                          let reg = new RegExp('周', 'g')
+                          let weekStr = info[0].replace(reg, '')
+                          course.weeks = getWeeks(weekStr)
+                          course.teacher = info[2]
+                          course.position = info[1]
+                          course.day = weekday
+                      }
+                  })
+                  result.push(course)
+              }
+          })
+      }
+  })
+  console.log(result)
+  return result
+}
+
+// 解析表格模式
+function parseTable(html) {
+  const $ = cheerio.load(html, { decodeEntities: false });
+  let result = []
+  $('#kbgrid_table_0').find('td').each(function() {
+      if ($(this).hasClass('td_wrap') && $(this).text().trim() !== '') {
+          let info = []
+          let weekday = parseInt($(this).attr('id').split('-')[0])
+          $(this).find('font').each(function() {
+              let text = $(this).text().trim()
+              if (text !== '') {
+                  info.push(text)
+              }
+          })
+          console.log(info)
+          let hasNext = true
+          let index = 0
+          while (hasNext) {
+              let course = {}
+              course.name = info[index]
+              course.teacher = info[index + 3]
+              course.position = info[index + 2]
+              course.day = weekday
+              if(info[index + 1]){
+                  if(info[index + 1].split('节)')[1]){
+                      let [weeks, sections] = getTime(info[index + 1])
+                      course.weeks = weeks
+                      course.sections = sections
+                      result.push(course)
+                  }
+              }
+              if (info[index + 11] !== undefined) {
+                  index += 11
+              } else  {
+                  hasNext = false
+              }
+          }
+      }
+  })
+  return result
+}
+
 function scheduleHtmlParser(html) {
-    //除函数名外都可编辑
-    //传入的参数为上一步函数获取到的html
-    //可使用正则匹配
-    //可使用解析dom匹配，工具内置了$，跟jquery使用方法一样，直接用就可以了，参考：https://cnodejs.org/topic/5203a71844e76d216a727d2e
-    let result = []
-    let bbb = $('#table1 .timetable_con')
-    for (let u = 0; u < bbb.length; u++) {
-        let re = { sections: [], weeks: [] }
-        let aaa = $(bbb[u]).find('span')
-        let week = $(bbb[u]).parent('td')[0].attribs.id
-        if (week) {
-            re.day = week.split('-')[0]
-        }
-        for (let i = 0; i < aaa.length; i++) {
-            if (aaa[i].attribs.title == '上课地点') {
-                for (let j = 0; j < $(aaa[i]).next()[0].children.length; j++) {
-                    re.position = $(aaa[i]).next()[0].children[j].data
-                }
-            }
-            if (aaa[i].attribs.title == '节/周') {
-                for (let j = 0; j < $(aaa[i]).next()[0].children.length; j++) {
-                    let lesson = $(aaa[i]).next()[0].children[j].data
-                    for (let a = Number(lesson.split(')')[0].split('(')[1].split('-')[0]); a < Number(lesson.split(')')[0].split('(')[1].split('-')[1].split('节')[0]) + 1; a++) {
-                        re.sections.push({ section: a })
-                    }
-                    for (let a = Number(lesson.split(')')[1].split('-')[0]); a < Number(lesson.split(')')[1].split('-')[1].split('周')[0]) + 1; a++) {
-                        re.weeks.push(a)
-                    }
-                }
-            }
-            if (aaa[i].attribs.title == '教师') {
-                for (let j = 0; j < $(aaa[i]).next()[0].children.length; j++) {
-                    re.teacher = $(aaa[i]).next()[0].children[j].data
-                }
-            }
-            if (aaa[i].attribs.class == 'title') {
-                for (let j = 0; j < $(aaa[i]).children()[0].children.length; j++) {
-                    re.name = $(aaa[i]).children()[0].children[j].data
-                }
-            }
-        }
-        result.push(re)
-    }
-    console.log(result)
-    return result
+  let result = []
+
+  if ($('#type').text() === 'list') {
+      result = parseList(html)
+  } else {
+      result = parseTable(html)
+  }
+
+  console.log(result.length)
+  
+ return result
 }
